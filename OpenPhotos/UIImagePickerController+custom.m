@@ -8,6 +8,8 @@
 
 #import "UIImagePickerController+custom.h"
 #import <objc/runtime.h>
+#import <MobileCoreServices/MobileCoreServices.h>
+
 
 @implementation UIImagePickerController (custom)
 
@@ -80,31 +82,55 @@ static void unHook_delegateMethod(Class originalClass, SEL originalSel, SEL repl
  */
 - (void)swizzled_imagePickerController:(UIImagePickerController *)picker didFinishPickingMediaWithInfo:(NSDictionary<NSString *,id> *)info{
     
-    NSString *imageURLKey = @"UIImagePickerControllerImageURL";
-    NSString *imageKey = @"UIImagePickerControllerOriginalImage";
     NSMutableDictionary *dict = [[NSMutableDictionary alloc] initWithDictionary:info];
+    NSString *mediaType = [info objectForKey:UIImagePickerControllerMediaType];
+    if ([mediaType isEqualToString:(NSString *)kUTTypeImage]) {
+        NSString *imageURLKey = @"UIImagePickerControllerImageURL";
+        NSString *imageKey = @"UIImagePickerControllerOriginalImage";
+        
+        
+        //UIImagePickerControllerReferenceURL设为空是关键一步。
+        //相机是不会有asset URL,即referenceURL会为空，所以这里不需要传asset URL，直接传图片对象即可。
+        //让WKFileUploadPanel以为从相册来的图片也是从相机来的
+        [dict setValue:nil forKey:@"UIImagePickerControllerReferenceURL"];
+        UIImage *originImage = [dict valueForKey:imageKey];;
     
-    //UIImagePickerControllerReferenceURL设为空是关键一步。
-    //相机是不会有asset URL,即referenceURL会为空，所以这里不需要传asset URL，直接传图片对象即可。
-    //让WKFileUploadPanel以为从相册来的图片也是从相机来的
-    [dict setValue:nil forKey:@"UIImagePickerControllerReferenceURL"];
-    UIImage *originImage = [dict valueForKey:imageKey];;
-    
-    UIImage *targetImage = [UIImagePickerController compressImage:originImage];
-    
-    NSString *imageFilePath = [UIImagePickerController imageFilePath];
-    [UIImagePickerController saveToSandBox:targetImage filePath:imageFilePath];
-    NSURL *targetImageURL = [NSURL fileURLWithPath:imageFilePath];
-    [dict setObject:targetImage forKey:imageKey];
-    [dict setObject:targetImageURL forKey:imageURLKey];
+        UIImage *targetImage = [UIImagePickerController compressImage:originImage];
+        
+        NSString *imageFilePath = [UIImagePickerController imageFilePath];
+        [UIImagePickerController saveToSandBox:targetImage filePath:imageFilePath];
+        NSURL *targetImageURL = [NSURL fileURLWithPath:imageFilePath];
+        [dict setObject:targetImage forKey:imageKey];
+        [dict setObject:targetImageURL forKey:imageURLKey];
+    }else if ([mediaType isEqualToString:(NSString *)kUTTypeMovie]) {
+        NSLog(@"视频文件, 将其保存到沙盒之中....");
+        NSURL *url = [info objectForKey:UIImagePickerControllerMediaURL];
+        NSString *videoPath = url.path;
+        NSLog(@"视频原始路径videoPath=%@", videoPath);
+        NSFileManager *fileManager = [NSFileManager defaultManager];
+        NSString *videoFilePath = [UIImagePickerController videoFilePath];
+        BOOL copyRes= [fileManager copyItemAtPath:videoPath toPath:videoFilePath error:nil];
+        if (copyRes) {
+            NSLog(@"拷贝文件成功到：%@",videoFilePath);
+        }else{
+            NSLog(@"拷贝文件失败");
+        }
+    }
+  
     
     //方法的实现已经通过Method swizling交换了，所以这里调用的是原始实现
     [self swizzled_imagePickerController:picker didFinishPickingMediaWithInfo:dict];
 }
 
 + (void)saveToSandBox:(UIImage *)image filePath:(NSString *)path {
-    NSData *data = UIImagePNGRepresentation(image);
-    [data writeToFile:path atomically:YES];
+//    NSData *data = UIImagePNGRepresentation(image);
+    NSData *data = UIImageJPEGRepresentation(image, 0.5f);
+    BOOL saveImage = [data writeToFile:path atomically:YES];
+    if (saveImage) {
+        NSLog(@"保存图片到沙盒成功 path=%@", path);
+    }else{
+        NSLog(@"保存图片到沙盒失败");
+    }
 }
 
 + (NSString *)imageFilePath {
@@ -117,7 +143,22 @@ static void unHook_delegateMethod(Class originalClass, SEL originalSel, SEL repl
     NSDateFormatter *dateFormater = [[NSDateFormatter alloc] init];
     dateFormater.dateFormat = @"yyyyMMddHHmmss";
     NSString *dateString = [dateFormater stringFromDate:date];
-    NSString *fileName = [dateString stringByAppendingString:@".png"];
+    NSString *fileName = [dateString stringByAppendingString:@".jpg"];
+    return [documentDirectory stringByAppendingPathComponent:fileName];
+}
+
+
++ (NSString *)videoFilePath {
+    NSArray *documentDirectories =
+    NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,
+                                        NSUserDomainMask, YES);
+    
+    NSString *documentDirectory = [documentDirectories objectAtIndex:0];
+    NSDate *date = [NSDate date];
+    NSDateFormatter *dateFormater = [[NSDateFormatter alloc] init];
+    dateFormater.dateFormat = @"yyyyMMddHHmmss";
+    NSString *dateString = [dateFormater stringFromDate:date];
+    NSString *fileName = [dateString stringByAppendingString:@".MOV"];
     return [documentDirectory stringByAppendingPathComponent:fileName];
 }
 
